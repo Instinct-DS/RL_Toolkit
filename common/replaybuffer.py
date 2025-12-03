@@ -83,8 +83,10 @@ class NStepReplayBuffer:
                 break
         return reward, next_state, termination, truncation, i+1
 
-    def sample(self):
-        idx = np.random.randint(0, self.size, size=self.batch_size)
+    def sample(self, size = None):
+        if size is None:
+            size = self.size
+        idx = np.random.randint(0, size, size=self.batch_size)
         batch = (
             self.states[idx],
             self.actions[idx],
