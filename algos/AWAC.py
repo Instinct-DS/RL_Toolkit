@@ -14,7 +14,7 @@ from tqdm import tqdm
 import torch.optim as optim
 from common.replaybuffer import NStepReplayBuffer
 from common.logger import MLFlowLogger
-from common.utils import atanh, SoftUpdate
+from common.utils import atanh, SoftUpdate, load_demo_trajectories
 from networks.network import Q_network
 from networks.policy import TanhGaussianPolicy
 from collections import deque, namedtuple
@@ -26,7 +26,7 @@ class AWAC:
             state_dim,
             action_dim,
             tau=0.005,
-            gamma=0.99,
+            gamma=0.999,
             lr=3e-4,
             batch_size=256,
             buffer_size=1_000_000,
@@ -39,9 +39,9 @@ class AWAC:
             n_envs =4,
             alpha = 0.0, 
             bc_weight = 0.0,
-            awac_lambda = 1.0,
-            max_weight = 100.0,
-            policy_update_period = 1,
+            awac_lambda = 3.0,
+            max_weight = 2.0,
+            policy_update_period = 5,
             q_update_period = 1,
             use_automatic_entropy_tuning = False,
             logger_name="mlflow",
@@ -84,7 +84,7 @@ class AWAC:
 
         # Set random seeds
         if seed is not None:
-            torch.manual_seed(seed)
+            # torch.manual_seed(seed)
             np.random.seed(seed)
             random.seed(seed)
 
@@ -95,8 +95,8 @@ class AWAC:
         # Critics
         self.critic1 = Q_network(state_dim, action_dim).to(self.device)
         self.critic2 = Q_network(state_dim, action_dim).to(self.device)
-        self.critic1_optimizer = optim.Adam(self.critic1.parameters(), lr=lr)
-        self.critic2_optimizer = optim.Adam(self.critic2.parameters(), lr=lr)
+        self.critic1_optimizer = optim.SGD(self.critic1.parameters(), lr=lr, momentum=0.9)
+        self.critic2_optimizer = optim.SGD(self.critic2.parameters(), lr=lr, momentum=0.9)
 
         # Target critics
         self.target_critic1 = Q_network(state_dim, action_dim).to(self.device)
@@ -112,7 +112,7 @@ class AWAC:
             self.log_alpha = torch.zeros(1, requires_grad=True, device=self.device)
             self.alpha_optimizer = optim.Adam([self.log_alpha], lr=lr)
         else:
-            self.log_alpha = torch.log(alpha)
+            self.log_alpha = torch.log(torch.tensor(alpha)) if alpha != 0 else -torch.inf
 
         self.replay_buffer = NStepReplayBuffer(state_dim, action_dim, buffer_size, batch_size, n_step, gamma, n_envs)
 
@@ -151,7 +151,11 @@ class AWAC:
         policy_loss = policy_logpp
 
         return policy_loss, mse_loss
-
+    
+    def load_trajectories(self, demo_file, demo_env, demo_ocp):
+        self.replay_buffer = load_demo_trajectories(self.replay_buffer, demo_file, demo_env, demo_ocp, self.n_step, self.gamma)
+        return self.replay_buffer
+    
     def _train(self):
         batch_m, terminal_flag_m = self.replay_buffer.sample()
         states_m, actions_b_m, rewards_b_m, next_states_m, terminations_m, truncations_m = batch_m
@@ -195,7 +199,7 @@ class AWAC:
 
         # POLICY UPDATE #
         with torch.no_grad():
-            actions_pi, log_probs_pi = self.actor.sample(states_m)
+            actions_pi, _ = self.actor.sample_det(states_m)
             v1_pi = self.critic1(states_m, actions_pi)
             v2_pi = self.critic2(states_m, actions_pi)
             v_pi = torch.min(v1_pi, v2_pi)
@@ -203,12 +207,18 @@ class AWAC:
             q_adv = torch.min(q1_pred, q2_pred)
             score = q_adv - v_pi
 
-            weights = torch.exp(score / self.awac_lambda)
-            weights = torch.clamp(weights, max=self.max_weight)
-        
+            exp_adv = torch.clamp(score / self.awac_lambda, min=-self.max_weight, max=self.max_weight)
+            weights = torch.exp(exp_adv)
+            # Normalize weights
+            # adv_mean = torch.mean(score)
+            # adv_std = torch.std(score) + 1e-5
+            # normalized_score = (score - adv_mean) / adv_std
+            # weights = torch.exp(normalized_score / self.awac_lambda)
+
+
         policy_logpp = self.actor.log_probs(states_m, actions_b_m)
-        POLICY_LOSS = alpha * log_probs.mean()
-        POLICY_LOSS = POLICY_LOSS + (-policy_logpp * weights).mean()
+        POLICY_LOSS = -alpha * log_probs.mean()
+        POLICY_LOSS = POLICY_LOSS + (-policy_logpp *weights).mean()
         if self.bc_weight > 0:
             train_policy_loss, train_mse_loss = self._run_bc_batch(self.replay_buffer)
             POLICY_LOSS = POLICY_LOSS + self.bc_weight*train_policy_loss
@@ -249,20 +259,18 @@ class AWAC:
         self.train_offline_steps = train_offline_steps
         self.train_online_steps = train_online_steps
         self.log_interval = log_interval
-        log_interval_offline = self.log_interval
+        log_interval_offline = self.log_interval*10
         self.verbose = verbose
         self.progress_bar = progress_bar
 
         progress_bar_1 = tqdm(total=self.train_offline_steps, desc="Offline Training Steps")
-        log_interval_offline = self.log_interval
         actor_offline_loss = deque(maxlen=log_interval_offline)
         critic1_offline_loss = deque(maxlen=log_interval_offline)
         critic2_offline_loss = deque(maxlen=log_interval_offline)
         alpha_offline_loss = deque(maxlen=log_interval_offline)
         alpha_offline = deque(maxlen=log_interval_offline)
 
-
-
+        # Logger Init #
         self.logger.start()
         self.logger._log_params(self.hparams)
 
@@ -275,18 +283,18 @@ class AWAC:
             alpha_offline.append(alpha)
             
             if self._n_train_steps_total % log_interval_offline == 0:
-                self.logger.log_metric("actor_loss", np.mean(actor_offline_loss), step=self.timesteps_ran)
-                self.logger.log_metric("critic1_loss", np.mean(critic1_offline_loss), step=self.timesteps_ran)
-                self.logger.log_metric("critic2_loss", np.mean(critic2_offline_loss), step=self.timesteps_ran)
-                self.logger.log_metric("alpha_loss", np.mean(alpha_offline_loss), step=self.timesteps_ran)
-                self.logger.log_metric("alpha", np.mean(alpha_offline), step=self.timesteps_ran)
+                self.logger.log_metric("actor_loss", np.mean(actor_offline_loss), step=self._n_train_steps_total)
+                self.logger.log_metric("critic1_loss", np.mean(critic1_offline_loss), step=self._n_train_steps_total)
+                self.logger.log_metric("critic2_loss", np.mean(critic2_offline_loss), step=self._n_train_steps_total)
+                self.logger.log_metric("alpha_loss", np.mean(alpha_offline_loss), step=self._n_train_steps_total)
+                self.logger.log_metric("alpha", np.mean(alpha_offline), step=self._n_train_steps_total)
 
             progress_bar_1.update(1)
         progress_bar_1.close()
 
         # Reset for online training #
         self._n_train_steps_total = 0
-        progress_bar_2 = tqdm(total=self.total_offline_gradient_steps, desc="Online Training Steps")
+        progress_bar_2 = tqdm(total=self.train_online_steps, desc="Online Training Steps")
         obs, _ = env.reset()
         episode_start = np.zeros(env.num_envs, dtype=bool)
         episode_rewards = np.zeros(shape=(env.num_envs,))
@@ -295,7 +303,8 @@ class AWAC:
         self.timesteps_ran = 0
         while self.timesteps_ran <= self.train_online_steps:
             with torch.no_grad():
-                actions = self.actor.sample(obs)
+                obs_cuda = torch.FloatTensor(obs).to(self.device)
+                actions = self.actor.sample(obs_cuda)[0].cpu().numpy()
             # Environment step
             next_obs, rewards, terminations, truncations, infos = env.step(actions)
             dones = np.logical_or(terminations, truncations)
@@ -365,9 +374,4 @@ class AWAC:
 
             progress_bar_2.update(env.num_envs)
         progress_bar_2.close()
-
-
-
-
-
 
