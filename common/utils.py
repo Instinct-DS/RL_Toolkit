@@ -9,7 +9,7 @@ from collections import deque
 from tqdm import tqdm
 
 # Find atanh #
-def atanh(x, eps=1e-3):
+def atanh(x, eps=1e-6):
     x = x.clamp(-1 + eps, 1 - eps)
     return 0.5 * (torch.log1p(x) - torch.log1p(-x))
 
