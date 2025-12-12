@@ -21,6 +21,22 @@ def SoftUpdate(target_network, source_network, tau=0.005):
             (1 - tau) * target_param.data + tau * source_param.data
         )
 
+# Nodes Used in OCP #
+def lglnodes(N):
+    N1 = N + 1
+    x = np.cos(np.pi * np.arange(N1) / N)
+    P = np.zeros((N1, N1))
+    xold = 2 * np.ones_like(x)
+    while np.max(np.abs(x - xold)) > np.finfo(float).eps:
+        xold = x.copy()
+        P[:, 0] = 1
+        P[:, 1] = x
+        for k in range(2, N1):
+            P[:, k] = ((2 * k - 1) * x * P[:, k - 1] - (k - 1) * P[:, k - 2]) / k
+        x = xold - (x * P[:, N] - P[:, N - 1]) / (N1 * P[:, N])
+    w = 2 / (N * N1 * P[:, N]**2)
+    return np.flip(x), np.flip(w)    
+
 # Get Interpolator #
 def getInterpolators(result, nds):
     n = len(nds)
