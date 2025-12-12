@@ -82,4 +82,38 @@ class TanhGaussianPolicy(nn.Module):
         log_det_jac = torch.sum(2 * (math.log(2) - action_pre - F.softplus(-2 * action_pre)), dim=-1)
         log_prob = log_prob_ - log_det_jac
         return log_prob
+    
+# Deterministic Policy #
+class DeterministicPolicy(nn.Module):
+    def __init__(self, state_dim, action_dim, hidden_sizes = [256, 256], activation : str = None):
+        super().__init__()
+        self.main_head = nn.Sequential()
+        activation_map = {
+            "relu" : nn.ReLU(),
+            "leakyrelu" : nn.LeakyReLU(),
+            "gelu" : nn.GELU(),
+            "selu" : nn.SELU(),
+            "silu" : nn.SiLU(),
+            "mish" : nn.Mish(),
+            "tanh" : nn.Tanh(),
+            "sigmoid" : nn.Sigmoid(),
+        }
+        if activation is not None:
+            assert activation in ["relu", "leakyrelu", "gelu", "selu", "silu", "mish", "tanh", "sigmoid"]
+        else:
+            activation = "relu"
+
+        in_size = state_dim
+        for i, hidden_size in enumerate(hidden_sizes):
+            self.main_head.add_module(name=f"fc{i}", module=nn.Linear(in_features=in_size, out_features=hidden_size))
+            self.main_head.add_module(name=activation, module=activation_map[activation])
+            in_size = hidden_size
+        
+        self.final = nn.Linear(in_features=in_size, out_features=action_dim)
+        self.tanh = nn.Tanh()
+
+    def forward(self, state):
+        x = self.main_head(state)
+        x = self.tanh(self.final(x))
+        return x
 
