@@ -7,7 +7,7 @@ import numpy as np
 import pickle
 from collections import deque
 from tqdm import tqdm
-from scipy.integrate import BarycentricInterpolator
+from scipy.interpolate import BarycentricInterpolator, CubicSpline
 
 # Find atanh #
 def atanh(x, eps=1e-3):
@@ -40,7 +40,7 @@ def lglnodes(N):
 # Get Interpolator #
 def getInterpolators(result, nds):
     n = len(nds)
-    Z = result.x
+    Z = result
     states = np.reshape(Z[:6*n], shape=(n,6), order='F')
     ctrl = np.reshape(Z[6*n:8*n], shape=(n,2), order="F")
     tf = Z[-1]
@@ -54,14 +54,14 @@ def getInterpolators(result, nds):
     tht0 = ctrl[:, 0]
     thtP = ctrl[:, 1]
 
-    x_int = BarycentricInterpolator(nds, x_i)
-    z_int = BarycentricInterpolator(nds, z_i)
-    u_int = BarycentricInterpolator(nds, u_i)
-    w_int = BarycentricInterpolator(nds, w_i)
-    omg_int = BarycentricInterpolator(nds, omg_i)
-    lmbi_int = BarycentricInterpolator(nds, lmbi)
-    tht0_int = BarycentricInterpolator(nds, tht0)
-    thtP_int = BarycentricInterpolator(nds, thtP)
+    x_int = CubicSpline(nds, x_i)
+    z_int = CubicSpline(nds, z_i)
+    u_int = CubicSpline(nds, u_i)
+    w_int = CubicSpline(nds, w_i)
+    omg_int = CubicSpline(nds, omg_i)
+    lmbi_int = CubicSpline(nds, lmbi)
+    tht0_int = CubicSpline(nds, tht0)
+    thtP_int = CubicSpline(nds, thtP)
 
     return x_int, z_int, u_int, w_int, omg_int, lmbi_int, tht0_int, thtP_int
 

@@ -35,7 +35,7 @@ class TanhGaussianPolicy(nn.Module):
         in_size = state_dim
         for i, hidden_size in enumerate(hidden_sizes):
             self.main_head.add_module(name=f"fc{i}", module=nn.Linear(in_features=in_size, out_features=hidden_size))
-            self.main_head.add_module(name=activation, module=activation_map[activation])
+            self.main_head.add_module(name=activation+str(i), module=activation_map[activation])
             in_size = hidden_size
         
         self.mu_head = nn.Linear(in_features=in_size, out_features=action_dim)
@@ -106,7 +106,7 @@ class DeterministicPolicy(nn.Module):
         in_size = state_dim
         for i, hidden_size in enumerate(hidden_sizes):
             self.main_head.add_module(name=f"fc{i}", module=nn.Linear(in_features=in_size, out_features=hidden_size))
-            self.main_head.add_module(name=activation, module=activation_map[activation])
+            self.main_head.add_module(name=activation+str(i), module=activation_map[activation])
             in_size = hidden_size
         
         self.final = nn.Linear(in_features=in_size, out_features=action_dim)
@@ -116,4 +116,3 @@ class DeterministicPolicy(nn.Module):
         x = self.main_head(state)
         x = self.tanh(self.final(x))
         return x
-
