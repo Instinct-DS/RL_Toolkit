@@ -24,7 +24,7 @@ class MLFlowLogger:
             mlflow.end_run()
             self.run = None
 
-    def _log_params(self, params):
+    def log_params(self, params):
         mlflow.log_params(params)
 
     def log_metric(self, name, value, step):
