@@ -9,7 +9,7 @@ import numpy as np
 # MLP POLICIES #
 # Q_network #
 class Q_network(nn.Module):
-    def __init__(self, state_dim, action_dim, hidden_sizes = [256, 256], activation : str = None):
+    def __init__(self, state_dim, action_dim, hidden_sizes = [256, 256], activation : str = None, layer_norm=False):
         super().__init__()
         self.main_head = nn.Sequential()
         activation_map = {
@@ -29,16 +29,17 @@ class Q_network(nn.Module):
 
         in_size = state_dim + action_dim
         for i, hidden_size in enumerate(hidden_sizes):
-            self.main_head.add_module(name=f"fc{i}", module=nn.Linear(in_features=in_size, out_features=hidden_size))
-            self.main_head.add_module(name=activation, module=activation_map[activation])
+            self.main_head.add_module(name=f"{2*i}", module=nn.Linear(in_features=in_size, out_features=hidden_size))
+            if layer_norm:
+                self.main_head.add_module(name="layer_norm", module=nn.LayerNorm(in_size))
+            self.main_head.add_module(name=f"{2*i+1}", module=activation_map[activation])
             in_size = hidden_size
         
-        self.final = nn.Linear(in_features=in_size, out_features=1)
+        self.main_head.add_module(name=f"{2*len(hidden_sizes)}", module=nn.Linear(in_features=in_size, out_features=1))
 
     def forward(self, state, action):
         x = torch.cat([state, action], dim=-1)
         x = self.main_head(x)
-        x = self.final(x)
         return x.squeeze(-1)
     
     
